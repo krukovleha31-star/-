@@ -1,0 +1,91 @@
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import IntEnum
+from typing import Dict, List
+
+
+class OrderStatus(IntEnum):
+    NEW = 1
+    PAID = 2
+    DELIVERED = 3
+    CANCELLED = 4
+
+
+class LoyaltyTier(IntEnum):
+    BASIC = 1       # 0%
+    SILVER = 2      # 5%
+    GOLD = 3        # 10%
+
+
+# Ставка скидки вынесена в словарь: работает и с int, и с LoyaltyTier
+TIER_DISCOUNT_RATES: Dict[int, float] = {
+    LoyaltyTier.BASIC: 0.0,
+    LoyaltyTier.SILVER: 0.05,
+    LoyaltyTier.GOLD: 0.10,
+}
+
+
+@dataclass
+class OrderItem:
+    id: int
+    sku: str
+    title: str
+    price: float
+    quantity: int
+
+
+@dataclass
+class Order:
+    id: int
+    client_id: int
+    status: OrderStatus
+    created_at: datetime
+    items: List[OrderItem] = field(default_factory=list)
+    total_amount: float = 0.0
+    discount_amount: float = 0.0
+
+    @property
+    def raw_total(self) -> float:
+        return sum(item.price * item.quantity for item in self.items)
+
+
+@dataclass
+class Client:
+    id: int
+    name: str
+    loyalty_tier: int  # принимает и число (1/2/3), и LoyaltyTier
+
+
+class LegacyOrderService:
+    def find_duplicate_skus(self, orders: List[Order]) -> List[str]:
+        seen, duplicates = set(), set()
+        for order in orders:
+            for item in order.items:
+                if item.sku in seen:
+                    duplicates.add(item.sku)
+                else:
+                    seen.add(item.sku)
+        return sorted(duplicates)
+
+    def apply_discounts(self, orders: List[Order], clients: List[Client]) -> None:
+        clients_by_id: Dict[int, Client] = {c.id: c for c in clients}
+
+        for order in orders:
+            if order.status == OrderStatus.CANCELLED:
+                continue
+
+            client = clients_by_id.get(order.client_id)
+            rate = TIER_DISCOUNT_RATES.get(client.loyalty_tier, 0.0) if client else 0.0
+
+            order.discount_amount = round(order.raw_total * rate, 2)
+            order.total_amount = round(order.raw_total - order.discount_amount, 2)
+
+    def generate_batch_report(self, orders: List[Order]) -> str:
+        lines = ["=== СВОДНЫЙ ОТЧЕТ ПО ПАЧКЕ ЗАКАЗОВ ==="]
+        lines += (
+            f"Заказ #{o.id} [Клиент {o.client_id}] - "
+            f"Итого: {o.total_amount:.2f}, Скидка: {o.discount_amount:.2f}"
+            for o in orders
+        )
+        lines.append(f"Всего обработано заказов: {len(orders)}")
+        return "\n".join(lines) + "\n"
